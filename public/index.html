@@ -24,7 +24,7 @@ button{font:inherit;font-weight:650;border:0;border-radius:10px;padding:11px 13p
 <section class="panel" id="lobby">
   <h2 style="margin:0 0 4px;font-size:19px">Masuk permainan</h2>
   <p style="margin:0">Buat room lalu bagikan kodenya ke lawan, atau gabung ke room teman.</p>
-  <label for="name">Nama pemain</label><input id="name" maxlength="18" placeholder="Contoh: RajaCatur" autocomplete="nickname">
+  <label for="name">Nama pemain (wajib)</label><input id="name" maxlength="18" placeholder="Contoh: RajaCatur" autocomplete="nickname" required>
   <div class="actions"><button id="create">＋ Buat room</button></div>
   <label for="code">Kode room teman</label><div class="roomrow"><input id="code" maxlength="5" placeholder="ABCDE" autocapitalize="characters"><button id="join">Gabung</button></div>
   <div id="lobbyStatus" class="status">Menyiapkan koneksi ke server…</div>
@@ -36,7 +36,7 @@ button{font:inherit;font-weight:650;border:0;border-radius:10px;padding:11px 13p
       <div class="board" id="board" role="grid" aria-label="Papan catur"></div>
       <div class="playerbar"><span>Putih · <strong id="whiteName">-</strong></span><span id="whiteClock">♔</span></div>
     </div>
-    <div class="actions"><button class="secondary" id="copy">Salin kode room</button><button class="secondary" id="newgame">Game baru</button><button class="danger" id="resign">Menyerah</button><button class="secondary" id="leave">Keluar</button></div>
+    <div class="actions"><button class="secondary" id="copy">Salin kode room</button><button class="secondary" id="copylink">Salin link room</button><button class="secondary" id="newgame">Game baru</button><button class="danger" id="resign">Menyerah</button><button class="secondary" id="leave">Keluar</button></div>
   </section>
   <aside class="panel">
     <h2 style="margin:0 0 10px;font-size:19px">Status pertandingan</h2>
@@ -50,41 +50,98 @@ button{font:inherit;font-weight:650;border:0;border-radius:10px;padding:11px 13p
 </main>
 <script>
 (() => {
-  // GANTI URL INI setelah server ter-deploy di Render.
-  // Contoh: wss://catur-multiplayer-kamu.onrender.com/ws
+  // URL server Abasthan. Jangan ubah kecuali domain service berubah.
   const SERVER_URL = "wss://longboat-realistic-turtle.abasthan.app/ws";
   const $ = (id) => document.getElementById(id);
   const pieces = { K:"♔",Q:"♕",R:"♖",B:"♗",N:"♘",P:"♙",k:"♚",q:"♛",r:"♜",b:"♝",n:"♞",p:"♟" };
   let ws, myColor = null, currentRoom = null, state = null, selected = null, legalTargets = [], lastMove = null, resigned = null;
+  let reconnectTimer = null, reconnectDelay = 1000, manualLeave = false;
+  const params = new URLSearchParams(location.search);
+  const invitedRoom = (params.get("room") || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0,5);
+  const STORE = { room:"catur_room", color:"catur_color", token:"catur_token", name:"catur_name" };
+  function stored(k){ try{return localStorage.getItem(STORE[k]) || "";}catch{return "";} }
+  function save(k,v){ try{if(v)localStorage.setItem(STORE[k],v);else localStorage.removeItem(STORE[k]);}catch{} }
+  function clearSession(){Object.keys(STORE).forEach(k=>save(k,""));}
+  function shareUrl(code){return location.origin + "/?room=" + encodeURIComponent(code);}
+  if(invitedRoom) $("code").value=invitedRoom;
+  if(stored("name")) $("name").value=stored("name");
   const files = "abcdefgh";
   function setConnection(text, ok=false){ $("connection").textContent=text; $("connection").style.color=ok?"#9bf0c9":"#ffaaaa"; }
   function status(text, kind=""){ $("lobbyStatus").textContent=text; $("lobbyStatus").className="status "+kind; }
   function gameStatus(text, kind=""){ $("gameStatus").textContent=text; $("gameStatus").className="status "+kind; }
   function connect(){
-    try { ws = new WebSocket(SERVER_URL); } catch(e){ setConnection("URL server belum diatur"); status("Ganti SERVER_URL di index.html dengan URL Render lu."); return; }
-    ws.onopen = () => { setConnection("Terhubung",true); status("Server terhubung. Buat room atau masukkan kode teman.","good"); };
-    ws.onclose = () => { setConnection("Terputus"); status("Koneksi putus. Muat ulang halaman setelah server aktif."); };
-    ws.onerror = () => { setConnection("Koneksi error"); };
-    ws.onmessage = (ev) => {
+    if(ws && (ws.readyState===WebSocket.OPEN || ws.readyState===WebSocket.CONNECTING)) return;
+    clearTimeout(reconnectTimer);
+    manualLeave=false;
+    try { ws = new WebSocket(SERVER_URL); }
+    catch(e){ setConnection("Koneksi error"); status("Tidak bisa membuka koneksi. Periksa jaringan atau URL server.","bad"); scheduleReconnect(); return; }
+    const thisWs=ws;
+    thisWs.onopen = () => {
+      reconnectDelay=1000;
+      setConnection("Terhubung",true);
+      const savedRoom=stored("room"), savedColor=stored("color"), token=stored("token");
+      const desiredRoom=invitedRoom || currentRoom || savedRoom;
+      if(desiredRoom && token && savedColor && savedRoom===desiredRoom){
+        currentRoom=desiredRoom; myColor=savedColor; send({type:"reconnect",code:desiredRoom,color:savedColor,token});
+        status("Menyambungkan kembali ke room "+desiredRoom+"…");
+      } else {
+        status(invitedRoom ? "Masukkan nama lu untuk masuk ke room "+invitedRoom+"." : "Server terhubung. Buat room atau masukkan kode teman.","good");
+      }
+    };
+    thisWs.onclose = () => {
+      if(thisWs!==ws) return;
+      setConnection("Menyambung ulang…");
+      if(!manualLeave) { status("Koneksi terputus. Mencoba menyambung ulang otomatis…"); scheduleReconnect(); }
+    };
+    thisWs.onerror = () => { if(thisWs===ws) setConnection("Koneksi terganggu"); };
+    thisWs.onmessage = (ev) => {
+      if(thisWs!==ws) return;
       let m; try { m=JSON.parse(ev.data); } catch { return; }
-      if(m.type==="error"){ status(m.message,"bad"); gameStatus(m.message,"bad"); return; }
-      if(m.type==="joined"){ myColor=m.color; currentRoom=m.roomCode; $("lobby").classList.add("hidden"); $("game").classList.remove("hidden"); status("Bergabung ke room "+currentRoom,"good"); }
-      if(m.type==="state"){ state=m; currentRoom=m.roomCode; render(); }
-      if(m.type==="notice"){ gameStatus(m.message,"bad"); }
-      if(m.type==="resigned"){ resigned=m; render(); }
-      if(m.type==="left"){ resetToLobby(); }
+      if(m.type==="error"){
+        status(m.message,"bad"); gameStatus(m.message,"bad");
+        if(/Room sudah hilang|Room tidak ditemukan|Sesi sambung ulang tidak valid/i.test(m.message) && currentRoom){
+          clearSession(); myColor=null; currentRoom=null; state=null; resigned=null;
+          $("game").classList.add("hidden"); $("lobby").classList.remove("hidden");
+          if(invitedRoom) $("code").value=invitedRoom;
+          status(m.message+" Masukkan nama lalu gabung lagi.","bad");
+        }
+        return;
+      }
+      if(m.type==="joined"){
+        manualLeave=false; myColor=m.color; currentRoom=m.roomCode; save("room",currentRoom); save("color",myColor); save("token",m.token); save("name",m.name || playerName());
+        $("name").value=m.name || playerName(); $("lobby").classList.add("hidden"); $("game").classList.remove("hidden");
+        status("Bergabung ke room "+currentRoom,"good");
+      }
+      if(m.type==="state"){state=m;currentRoom=m.roomCode;render();}
+      if(m.type==="notice"){gameStatus(m.message,"good");}
+      if(m.type==="resigned"){resigned=m;render();}
+      if(m.type==="left"){resetToLobby();}
     };
   }
-  function send(data){ if(ws && ws.readyState===WebSocket.OPEN) ws.send(JSON.stringify(data)); else status("Belum terhubung ke server.","bad"); }
-  function playerName(){ return $("name").value.trim().slice(0,18) || "Pemain"; }
-  $("create").onclick=()=>send({type:"create",name:playerName()});
-  $("join").onclick=()=>{const code=$("code").value.trim().toUpperCase(); if(!/^[A-Z0-9]{5}$/.test(code)) return status("Kode room harus 5 karakter.","bad"); send({type:"join",code,name:playerName()});};
+  function scheduleReconnect(){
+    if(manualLeave || reconnectTimer) return;
+    reconnectTimer=setTimeout(()=>{reconnectTimer=null;connect();},reconnectDelay);
+    reconnectDelay=Math.min(reconnectDelay*1.8,15000);
+  }
+  function send(data){ if(ws && ws.readyState===WebSocket.OPEN) ws.send(JSON.stringify(data)); else status("Koneksi sedang dipulihkan, tunggu sebentar…"); }
+  function playerName(){ return $("name").value.trim().slice(0,18); }
+  function requireName(){const n=playerName();if(!n){status("Masukkan nama dulu sebelum membuat atau bergabung ke room.","bad");$("name").focus();return "";}save("name",n);return n;}
+  $("create").onclick=()=>{const name=requireName();if(name)send({type:"create",name});};
+  $("join").onclick=()=>{const name=requireName();if(!name)return;const code=$("code").value.trim().toUpperCase();if(!/^[A-Z0-9]{5}$/.test(code))return status("Kode room harus 5 karakter.","bad");send({type:"join",code,name});};
   $("code").addEventListener("input",()=>{$("code").value=$("code").value.toUpperCase().replace(/[^A-Z0-9]/g,"").slice(0,5);});
-  $("copy").onclick=async()=>{try{await navigator.clipboard.writeText(currentRoom||""); gameStatus("Kode "+currentRoom+" disalin.","good");}catch{gameStatus("Kode room: "+currentRoom);}};
+  $("name").addEventListener("input",()=>save("name",playerName()));
+  async function copyText(value, success){
+    try{await navigator.clipboard.writeText(value);gameStatus(success,"good");}
+    catch{gameStatus("Salin manual: "+value,"good");}
+  }
+  $("copy").onclick=()=>copyText(currentRoom||"","Kode room "+currentRoom+" disalin.");
+  $("copylink").onclick=()=>copyText(shareUrl(currentRoom||invitedRoom),"Link room disalin. Kirim ke teman.");
   $("newgame").onclick=()=>{if(confirm("Mulai ulang papan untuk kedua pemain?")){resigned=null;send({type:"newgame"});}};
   $("resign").onclick=()=>{if(confirm("Yakin mau menyerah?"))send({type:"resign"});};
-  $("leave").onclick=()=>{send({type:"leave"}); resetToLobby();};
+  $("leave").onclick=()=>{manualLeave=true;clearTimeout(reconnectTimer);if(ws&&ws.readyState===WebSocket.OPEN)send({type:"leave"});clearSession();resetToLobby();};
   function resetToLobby(){myColor=null;currentRoom=null;state=null;selected=null;legalTargets=[];lastMove=null;resigned=null;$("game").classList.add("hidden");$("lobby").classList.remove("hidden");$("board").innerHTML="";status("Buat room atau gabung room teman.");}
+  document.addEventListener("visibilitychange",()=>{if(!document.hidden && (!ws || ws.readyState===WebSocket.CLOSED))connect();});
+  window.addEventListener("online",()=>{if(!ws || ws.readyState===WebSocket.CLOSED)connect();});
   function parseFen(fen){
     const rows=fen.split(" ")[0].split("/"); const board=[];
     rows.forEach((row,r)=>{let c=0;for(const ch of row){if(/[1-8]/.test(ch)){c+=Number(ch);}else{board.push({piece:ch,file:files[c],rank:8-r});c++;}}});
