@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<meta name="theme-color" content="#111827">
+<title>Catur Multiplayer</title>
+<style>
+:root{color-scheme:dark;--bg:#0b1020;--panel:#151d31;--panel2:#202b43;--text:#f3f4f6;--muted:#a8b3c7;--accent:#73e0b1;--danger:#ff8585}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at top,#1b2942,var(--bg) 60%);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;min-height:100vh}
+main{max-width:960px;margin:auto;padding:18px}header{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:16px}h1{font-size:clamp(22px,4vw,32px);margin:0}p{color:var(--muted);line-height:1.45}.pill{border:1px solid #3a4965;border-radius:999px;padding:7px 11px;color:var(--muted);font-size:12px;white-space:nowrap}
+.layout{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(250px,.8fr);gap:16px}.panel{background:rgba(21,29,49,.95);border:1px solid #2b3852;border-radius:18px;padding:16px;box-shadow:0 16px 44px #0003}.hidden{display:none!important}
+label{display:block;font-size:13px;color:var(--muted);margin:12px 0 6px}input{width:100%;padding:12px;border-radius:10px;border:1px solid #3b4963;background:#0d1425;color:var(--text);font:inherit;outline:none}input:focus{border-color:var(--accent)}
+button{font:inherit;font-weight:650;border:0;border-radius:10px;padding:11px 13px;background:var(--accent);color:#0b1720;cursor:pointer}button:disabled{opacity:.45;cursor:not-allowed}.secondary{background:#293650;color:var(--text);border:1px solid #3a4965}.danger{background:#5c2935;color:#ffe3e3;border:1px solid #8c3e4d}.actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}.actions button{flex:1}.roomrow{display:flex;gap:8px;align-items:center}.roomrow input{min-width:0}.status{padding:10px 12px;background:#0e1729;border-radius:10px;color:var(--muted);font-size:14px;margin:12px 0}.status.good{color:#9bf0c9}.status.bad{color:#ffaaaa}
+.boardwrap{width:100%;max-width:620px;margin:0 auto}.playerbar{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 2px;color:var(--muted);font-size:14px}.playerbar strong{color:var(--text)}.board{display:grid;grid-template-columns:repeat(8,1fr);aspect-ratio:1;width:100%;border:4px solid #38445a;border-radius:7px;overflow:hidden;touch-action:manipulation}
+.square{position:relative;display:flex;align-items:center;justify-content:center;min-width:0;aspect-ratio:1;padding:0;border-radius:0;color:#111;cursor:pointer;user-select:none}.light{background:#e9dfc8}.dark{background:#78947d}.square.selected{box-shadow:inset 0 0 0 4px #f5d76e}.square.last{background:#b6b95f}.square.legal:after{content:"";position:absolute;width:24%;height:24%;border-radius:50%;background:#15221d66}.square.capture:after{content:"";position:absolute;inset:5%;border:4px solid #15221d88;border-radius:50%}.piece{font-family:"Arial Unicode MS","DejaVu Sans",serif;font-size:clamp(24px,7.2vw,58px);line-height:1;z-index:1;text-shadow:0 1px 1px #0002}.whitepiece{color:#fffdf4;text-shadow:0 2px 2px #111,0 0 2px #111}.blackpiece{color:#17212a;text-shadow:0 1px 1px #fff5}.coords{position:absolute;font-size:9px;font-weight:700;left:3px;top:2px;opacity:.65;z-index:2}
+.players{display:grid;grid-template-columns:1fr 1fr;gap:8px}.player{background:#0e1729;padding:11px;border-radius:10px;min-width:0}.player small{color:var(--muted)}.player strong{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:3px}.movebox{background:#0e1729;border-radius:10px;padding:10px;min-height:72px;max-height:180px;overflow:auto;font-size:13px;color:var(--muted);white-space:pre-wrap}.foot{font-size:12px;color:#7f8ba2;margin-top:14px}
+@media(max-width:720px){main{padding:12px}.layout{grid-template-columns:1fr}.panel{padding:13px}.boardwrap{max-width:560px}.piece{font-size:clamp(25px,10vw,54px)}header{align-items:flex-start}}
+</style>
+</head>
+<body>
+<main>
+<header><div><h1>♟ Catur Multiplayer</h1><p style="margin:5px 0 0">Main 1 lawan 1 lewat room code.</p></div><span class="pill" id="connection">Menghubungkan…</span></header>
+<section class="panel" id="lobby">
+  <h2 style="margin:0 0 4px;font-size:19px">Masuk permainan</h2>
+  <p style="margin:0">Buat room lalu bagikan kodenya ke lawan, atau gabung ke room teman. Room bertaruhan hanya bisa dimasuki lewat link/token dari bot.</p>
+  <label for="name">Nama pemain (wajib)</label><input id="name" maxlength="18" placeholder="Contoh: RajaCatur" autocomplete="nickname" required>
+  <div class="actions"><button id="create">＋ Buat room</button></div>
+  <label for="code">Kode room teman</label><div class="roomrow"><input id="code" maxlength="5" placeholder="ABCDE" autocapitalize="characters"><button id="join">Gabung</button></div>
+  <div id="lobbyStatus" class="status">Menyiapkan koneksi ke server…</div>
+</section>
+<div class="layout hidden" id="game">
+  <section class="panel">
+    <div class="boardwrap">
+      <div class="playerbar"><span>Hitam · <strong id="blackName">Menunggu…</strong></span><span id="blackClock">♚</span></div>
+      <div class="board" id="board" role="grid" aria-label="Papan catur"></div>
+      <div class="playerbar"><span>Putih · <strong id="whiteName">-</strong></span><span id="whiteClock">♔</span></div>
+    </div>
+    <div class="actions"><button class="secondary" id="copy">Salin kode room</button><button class="secondary" id="copylink">Salin link room</button><button class="secondary" id="newgame">Game baru</button><button class="danger" id="resign">Menyerah</button><button class="secondary" id="leave">Keluar</button></div>
+  </section>
+  <aside class="panel">
+    <h2 style="margin:0 0 10px;font-size:19px">Status pertandingan</h2>
+    <div class="status" id="gameStatus">Menunggu lawan…</div>
+    <div class="players"><div class="player"><small>Bidak putih</small><strong id="whitePlayer">-</strong></div><div class="player"><small>Bidak hitam</small><strong id="blackPlayer">-</strong></div></div>
+    <h3 style="font-size:15px;margin:18px 0 8px">Riwayat langkah</h3><div class="movebox" id="moves">Belum ada langkah.</div>
+    <p class="foot">Aturan langkah divalidasi server. Room dan pertandingan disimpan di memori server, jadi bisa hilang saat server restart atau tidur.</p>
+  </aside>
+</div>
+<p class="foot">Taruhan menggunakan poin virtual balance Wibusoft. Hadiah diklaim lewat command bot setelah server menetapkan pemenang.</p>
+</main>
+<script>
+(() => {
+  // URL server Abasthan. Jangan ubah kecuali domain service berubah.
+  const SERVER_URL = location.origin.replace(/^http/, "ws") + "/ws";
+  const $ = (id) => document.getElementById(id);
+  const pieces = { K:"♔",Q:"♕",R:"♖",B:"♗",N:"♘",P:"♙",k:"♚",q:"♛",r:"♜",b:"♝",n:"♞",p:"♟" };
+  let ws, myColor = null, currentRoom = null, state = null, selected = null, legalTargets = [], lastMove = null, resigned = null;
+  let reconnectTimer = null, reconnectDelay = 1000, manualLeave = false;
+  const params = new URLSearchParams(location.search);
+  const invitedRoom = (params.get("room") || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0,5);
+  const inviteToken = params.get("token") || "";
+  const STORE = { room:"catur_room", color:"catur_color", token:"catur_token", name:"catur_name" };
+  function stored(k){ try{return localStorage.getItem(STORE[k]) || "";}catch{return "";} }
+  function save(k,v){ try{if(v)localStorage.setItem(STORE[k],v);else localStorage.removeItem(STORE[k]);}catch{} }
+  function clearSession(){Object.keys(STORE).forEach(k=>save(k,""));}
+  function shareUrl(code){return location.origin + "/?room=" + encodeURIComponent(code);}
+  if(invitedRoom) $("code").value=invitedRoom;
+  if(stored("name")) $("name").value=stored("name");
+  const files = "abcdefgh";
+  function setConnection(text, ok=false){ $("connection").textContent=text; $("connection").style.color=ok?"#9bf0c9":"#ffaaaa"; }
+  function status(text, kind=""){ $("lobbyStatus").textContent=text; $("lobbyStatus").className="status "+kind; }
+  function gameStatus(text, kind=""){ $("gameStatus").textContent=text; $("gameStatus").className="status "+kind; }
+  function connect(){
+    if(ws && (ws.readyState===WebSocket.OPEN || ws.readyState===WebSocket.CONNECTING)) return;
+    clearTimeout(reconnectTimer);
+    manualLeave=false;
+    try { ws = new WebSocket(SERVER_URL); }
+    catch(e){ setConnection("Koneksi error"); status("Tidak bisa membuka koneksi. Periksa jaringan atau URL server.","bad"); scheduleReconnect(); return; }
+    const thisWs=ws;
+    thisWs.onopen = () => {
+      reconnectDelay=1000;
+      setConnection("Terhubung",true);
+      const savedRoom=stored("room"), savedColor=stored("color"), token=stored("token");
+      const desiredRoom=invitedRoom || currentRoom || savedRoom;
+      if(desiredRoom && token && savedColor && savedRoom===desiredRoom){
+        currentRoom=desiredRoom; myColor=savedColor; send({type:"reconnect",code:desiredRoom,color:savedColor,token});
+        status("Menyambungkan kembali ke room "+desiredRoom+"…");
+      } else {
+        status(invitedRoom ? "Masukkan nama lu untuk masuk ke room "+invitedRoom+"." : "Server terhubung. Buat room atau masukkan kode teman.","good");
+      }
+    };
+    thisWs.onclose = () => {
+      if(thisWs!==ws) return;
+      setConnection("Menyambung ulang…");
+      if(!manualLeave) { status("Koneksi terputus. Mencoba menyambung ulang otomatis…"); scheduleReconnect(); }
+    };
+    thisWs.onerror = () => { if(thisWs===ws) setConnection("Koneksi terganggu"); };
+    thisWs.onmessage = (ev) => {
+      if(thisWs!==ws) return;
+      let m; try { m=JSON.parse(ev.data); } catch { return; }
+      if(m.type==="error"){
+        status(m.message,"bad"); gameStatus(m.message,"bad");
+        if(/Room sudah hilang|Room tidak ditemukan|Sesi sambung ulang tidak valid/i.test(m.message) && currentRoom){
+          clearSession(); myColor=null; currentRoom=null; state=null; resigned=null;
+          $("game").classList.add("hidden"); $("lobby").classList.remove("hidden");
+          if(invitedRoom) $("code").value=invitedRoom;
+          status(m.message+" Masukkan nama lalu gabung lagi.","bad");
+        }
+        return;
+      }
+      if(m.type==="joined"){
+        manualLeave=false; myColor=m.color; currentRoom=m.roomCode; save("room",currentRoom); save("color",myColor); save("token",m.token); save("name",m.name || playerName());
+        $("name").value=m.name || playerName(); $("lobby").classList.add("hidden"); $("game").classList.remove("hidden");
+        status("Bergabung ke room "+currentRoom,"good");
+      }
+      if(m.type==="state"){state=m;currentRoom=m.roomCode;render();}
+      if(m.type==="notice"){gameStatus(m.message,"good");}
+      if(m.type==="resigned"){resigned=m;render();}
+      if(m.type==="left"){resetToLobby();}
+    };
+  }
+  function scheduleReconnect(){
+    if(manualLeave || reconnectTimer) return;
+    reconnectTimer=setTimeout(()=>{reconnectTimer=null;connect();},reconnectDelay);
+    reconnectDelay=Math.min(reconnectDelay*1.8,15000);
+  }
+  function send(data){ if(ws && ws.readyState===WebSocket.OPEN) ws.send(JSON.stringify(data)); else status("Koneksi sedang dipulihkan, tunggu sebentar…"); }
+  function playerName(){ return $("name").value.trim().slice(0,18); }
+  function requireName(){const n=playerName();if(!n){status("Masukkan nama dulu sebelum membuat atau bergabung ke room.","bad");$("name").focus();return "";}save("name",n);return n;}
+  $("create").onclick=()=>{const name=requireName();if(name)send(inviteToken?{type:"joinToken",code:invitedRoom,token:inviteToken,name}:{type:"create",name});};
+  $("join").onclick=()=>{const name=requireName();if(!name)return;const code=$("code").value.trim().toUpperCase();if(!/^[A-Z0-9]{5}$/.test(code))return status("Kode room harus 5 karakter.","bad");send({type:"join",code,name});};
+  $("code").addEventListener("input",()=>{$("code").value=$("code").value.toUpperCase().replace(/[^A-Z0-9]/g,"").slice(0,5);});
+  $("name").addEventListener("input",()=>save("name",playerName()));
+  async function copyText(value, success){
+    try{await navigator.clipboard.writeText(value);gameStatus(success,"good");}
+    catch{gameStatus("Salin manual: "+value,"good");}
+  }
+  $("copy").onclick=()=>copyText(currentRoom||"","Kode room "+currentRoom+" disalin.");
+  $("copylink").onclick=()=>copyText(shareUrl(currentRoom||invitedRoom),"Link room disalin. Kirim ke teman.");
+  $("newgame").onclick=()=>{if(confirm("Mulai ulang papan untuk kedua pemain?")){resigned=null;send({type:"newgame"});}};
+  $("resign").onclick=()=>{if(confirm("Yakin mau menyerah?"))send({type:"resign"});};
+  $("leave").onclick=()=>{manualLeave=true;clearTimeout(reconnectTimer);if(ws&&ws.readyState===WebSocket.OPEN)send({type:"leave"});clearSession();resetToLobby();};
+  function resetToLobby(){myColor=null;currentRoom=null;state=null;selected=null;legalTargets=[];lastMove=null;resigned=null;$("game").classList.add("hidden");$("lobby").classList.remove("hidden");$("board").innerHTML="";status("Buat room atau gabung room teman.");}
+  document.addEventListener("visibilitychange",()=>{if(!document.hidden && (!ws || ws.readyState===WebSocket.CLOSED))connect();});
+  window.addEventListener("online",()=>{if(!ws || ws.readyState===WebSocket.CLOSED)connect();});
+  function parseFen(fen){
+    const rows=fen.split(" ")[0].split("/"); const board=[];
+    rows.forEach((row,r)=>{let c=0;for(const ch of row){if(/[1-8]/.test(ch)){c+=Number(ch);}else{board.push({piece:ch,file:files[c],rank:8-r});c++;}}});
+    return board;
+  }
+  function render(){
+    if(!state)return;
+    $("whiteName").textContent=state.players.white||"Menunggu pemain";
+    $("blackName").textContent=state.players.black||"Menunggu pemain";
+    $("whitePlayer").textContent=state.players.white||"Belum bergabung";
+    $("blackPlayer").textContent=state.players.black||"Belum bergabung";
+    $("copy").textContent="Kode: "+state.roomCode+" · Salin";
+    const allMoves=state.history||[];
+    $("moves").textContent=allMoves.length?allMoves.reduce((acc,m,i)=>acc+(i%2===0?`${Math.floor(i/2)+1}. `:"")+m+(i%2===1?"\n":" "), ""):"Belum ada langkah.";
+    if(resigned){gameStatus(resigned.winner===myColor?"Lawan menyerah. Lu menang!":"Lu menyerah. Lawan menang.","bad");}
+    else if(state.checkmate){gameStatus("Skakmat! "+(state.winner===myColor?"Lu menang!":"Lawan menang."),"good");}
+    else if(state.stalemate){gameStatus("Remis: stalemate.");}
+    else if(state.draw){gameStatus("Permainan remis.");}
+    else if(!state.players.black||!state.players.white){gameStatus("Bagikan kode "+state.roomCode+" ke lawan. Lu bermain sebagai "+(myColor==="white"?"putih":"hitam")+".");}
+    else if(state.check){gameStatus((state.turn===(myColor==="white"?"w":"b")?"Giliran lu":"Giliran lawan")+" — SKAK!","bad");}
+    else {gameStatus((state.turn===(myColor==="white"?"w":"b")?"Giliran lu":"Giliran lawan")+" · "+(state.turn==="w"?"Putih":"Hitam"),"good");}
+    drawBoard();
+  }
+  function drawBoard(){
+    const el=$("board"); el.innerHTML="";
+    const piecesBySquare={}; for(const item of parseFen(state.fen))piecesBySquare[item.file+item.rank]=item.piece;
+    const flipped=myColor==="black";
+    for(let ri=0;ri<8;ri++)for(let ci=0;ci<8;ci++){
+      const file=files[flipped?7-ci:ci],rank=flipped?ri+1:8-ri,sq=file+rank;
+      const b=document.createElement("button");b.type="button";b.className="square "+(((files.indexOf(file)+rank)%2===0)?"light":"dark");
+      if(selected===sq)b.classList.add("selected");
+      if(lastMove&&(lastMove.from===sq||lastMove.to===sq))b.classList.add("last");
+      if(legalTargets.includes(sq))b.classList.add(piecesBySquare[sq]?"capture":"legal");
+      b.setAttribute("role","gridcell");b.setAttribute("aria-label",sq);
+      if(ci===0||ri===7){const co=document.createElement("span");co.className="coords";co.textContent=ci===0?rank:file;b.appendChild(co);}
+      if(piecesBySquare[sq]){const p=document.createElement("span");p.className="piece "+(piecesBySquare[sq]===piecesBySquare[sq].toUpperCase()?"whitepiece":"blackpiece");p.textContent=pieces[piecesBySquare[sq]];b.appendChild(p);}
+      b.onclick=()=>onSquare(sq,piecesBySquare[sq]);el.appendChild(b);
+    }
+  }
+  // Client highlights plausible destinations for convenience; server is authoritative.
+  function pseudoTargets(from,piece){
+    const out=[];const f=files.indexOf(from[0]),r=Number(from[1]),white=piece===piece.toUpperCase();
+    const add=(x,y)=>{if(x>=0&&x<8&&y>=1&&y<=8)out.push(files[x]+y);};
+    const kind=piece.toLowerCase();
+    if(kind==="p"){const dir=white?1:-1;add(f,r+dir);add(f,r+2*dir);add(f-1,r+dir);add(f+1,r+dir);}
+    if(kind==="n"){for(const [x,y] of [[1,2],[2,1],[-1,2],[-2,1],[1,-2],[2,-1],[-1,-2],[-2,-1]])add(f+x,r+y);}
+    if(kind==="k"){for(let x=-1;x<=1;x++)for(let y=-1;y<=1;y++)if(x||y)add(f+x,r+y);add(f+2,r);add(f-2,r);}
+    if(["b","r","q"].includes(kind)){const dirs=[];if(["b","q"].includes(kind))dirs.push([1,1],[1,-1],[-1,1],[-1,-1]);if(["r","q"].includes(kind))dirs.push([1,0],[-1,0],[0,1],[0,-1]);for(const [dx,dy] of dirs)for(let n=1;n<8;n++)add(f+dx*n,r+dy*n);}
+    return [...new Set(out)];
+  }
+  function onSquare(sq,piece){
+    if(!state||state.gameOver||resigned)return;
+    if(state.turn!==(myColor==="white"?"w":"b"))return;
+    if(selected&&legalTargets.includes(sq)){
+      let promotion="q";
+      const moving=parseFen(state.fen).find(x=>x.file+x.rank===selected);
+      if(moving&&moving.piece.toLowerCase()==="p"&&(sq[1]==="8"||sq[1]==="1")){
+        const choice=(prompt("Promosi pion: q=Ratu, r=Benteng, b=Gajah, n=Kuda","q")||"q").toLowerCase();
+        promotion=["q","r","b","n"].includes(choice)?choice:"q";
+      }
+      lastMove={from:selected,to:sq};send({type:"move",from:selected,to:sq,promotion});selected=null;legalTargets=[];drawBoard();return;
+    }
+    if(piece&&((myColor==="white"&&piece===piece.toUpperCase())||(myColor==="black"&&piece===piece.toLowerCase()))){
+      selected=sq;legalTargets=pseudoTargets(sq,piece);drawBoard();
+    }else{selected=null;legalTargets=[];drawBoard();}
+  }
+  connect();
+})();
+</script>
+</body>
+</html>
