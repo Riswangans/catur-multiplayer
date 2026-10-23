@@ -1,10 +1,19 @@
 {
-  "name": "game-botwhatsapp",
-  "version": "2.0.0",
+  "name": "kingrock-game-botwhatsapp",
+  "version": "1.1.0",
   "private": true,
-  "description": "Catur dan Ludo multiplayer dengan integrasi balance Wibusoft melalui custom script",
+  "description": "Existing KingRock multiplayer chess/Ludo server plus persistent Tetris score API",
   "main": "server.js",
-  "scripts": { "start": "node server.js" },
-  "engines": { "node": ">=18" },
-  "dependencies": { "chess.js": "^1.4.0", "express": "^4.21.2", "ws": "^8.18.0" }
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "chess.js": "^1.4.0",
+    "express": "^4.21.2",
+    "pg": "^8.16.3",
+    "ws": "^8.18.0"
+  }
 }
