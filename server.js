@@ -2,6 +2,7 @@
 const path = require('path');
 const http = require('http');
 const crypto = require('crypto');
+const dns = require('node:dns').promises;
 const express = require('express');
 const { WebSocketServer, WebSocket } = require('ws');
 const { Chess } = require('chess.js');
@@ -17,14 +18,9 @@ const GAME_API_KEY = String(process.env.GAME_API_KEY || process.env.KINGROCK_API
 const DATABASE_URL = String(process.env.DATABASE_URL || '');
 const TETRIS_TICKET_TTL_MS = 12 * 60 * 60 * 1000;
 const tetrisTickets = new Map();
-const tetrisPool = DATABASE_URL ? new Pool({
-  connectionString: DATABASE_URL,
-  max: Number(process.env.DB_POOL_MAX || 5),
-  connectionTimeoutMillis: 10000,
-  idleTimeoutMillis: 30000,
-  ...(process.env.DATABASE_SSL === 'true' ? { ssl: { rejectUnauthorized: false } } : {})
-}) : null;
+let tetrisPool = null;
 let tetrisDbReady = false;
+let tetrisDbError = null;
 if (!DATABASE_URL) console.warn('Tetris score storage disabled: DATABASE_URL is not configured. Chess/Ludo server remains available.');
 const rooms = new Map();
 app.use((req, res, next) => {
@@ -39,8 +35,8 @@ app.use((req, res, next) => {
 });
 app.use(express.json({ limit: '16kb' }));
 app.use(express.static(path.join(__dirname, 'public')));
-app.get('/health', (_req,res)=>res.json({ok:true,service:'game-botwhatsapp',rooms:rooms.size,tetrisScoreStorage:tetrisDbReady?'ready':(DATABASE_URL?'initializing_or_error':'not_configured')}));
-app.get('/api/health', (_req,res)=>res.json({ok:true,service:'game-botwhatsapp',rooms:rooms.size,tetrisScoreStorage:tetrisDbReady?'ready':'unavailable'}));
+app.get('/health', (_req,res)=>res.json({ok:true,service:'game-botwhatsapp',rooms:rooms.size,tetrisScoreStorage:tetrisDbReady?'ready':(DATABASE_URL?'initializing_or_error':'not_configured'),...(tetrisDbError?{tetrisScoreStorageError:tetrisDbError}:{})}));
+app.get('/api/health', (_req,res)=>res.json({ok:true,service:'game-botwhatsapp',rooms:rooms.size,tetrisScoreStorage:tetrisDbReady?'ready':'unavailable',...(tetrisDbError?{tetrisScoreStorageError:tetrisDbError}:{})}));
 app.get('/', (_req,res)=>res.sendFile(path.join(__dirname,'public','index.html')));
 app.get('/catur', (_req,res)=>res.redirect('/catur.html'));
 app.get('/ludo', (_req,res)=>res.redirect('/ludo.html'));
@@ -167,10 +163,39 @@ wss.on('connection',ws=>{
 setInterval(()=>{const now=Date.now();for(const [k,r] of rooms){if(now-r.lastActivity>12*60*60*1000)rooms.delete(k)}},30*60*1000).unref();
 setInterval(()=>{for(const ws of wss.clients){if(ws.isAlive===false){ws.terminate();continue;}ws.isAlive=false;try{ws.ping()}catch{ws.terminate()}}},25000).unref();
 async function initTetrisDatabase(){
- if(!tetrisPool)return;
- try{await tetrisPool.query(`CREATE TABLE IF NOT EXISTS tetris_scores (player_id TEXT PRIMARY KEY,best_score BIGINT NOT NULL DEFAULT 0,best_lines INTEGER NOT NULL DEFAULT 0,best_level INTEGER NOT NULL DEFAULT 1,best_duration INTEGER NOT NULL DEFAULT 0,updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`);tetrisDbReady=true;console.log('Tetris score database ready.');}
- catch(e){tetrisDbReady=false;console.error('Tetris database initialization failed:',e&&e.message?e.message:e);}
+ if(!DATABASE_URL)return;
+ let parsed;
+ try { parsed = new URL(DATABASE_URL); }
+ catch { tetrisDbError='INVALID_DATABASE_URL'; console.error('Tetris database initialization failed: DATABASE_URL is not a valid URL.'); return; }
+ const hostname=parsed.hostname;
+ let addresses=[];
+ try { addresses=await dns.lookup(hostname,{family:4,all:true}); }
+ catch(e) { tetrisDbError=e.code||'DNS_LOOKUP_FAILED'; console.error('Tetris database DNS lookup failed:',tetrisDbError); return; }
+ if(!addresses.length){tetrisDbError='NO_IPV4_ADDRESS';console.error('Tetris database DNS lookup returned no IPv4 addresses.');return;}
+ const database=decodeURIComponent(parsed.pathname.replace(/^\//,''));
+ const user=decodeURIComponent(parsed.username);
+ const password=decodeURIComponent(parsed.password);
+ const port=Number(parsed.port||5432);
+ const enableChannelBinding=parsed.searchParams.get('channel_binding')==='require';
+ const tableSql='CREATE TABLE IF NOT EXISTS tetris_scores (player_id TEXT PRIMARY KEY,best_score BIGINT NOT NULL DEFAULT 0,best_lines INTEGER NOT NULL DEFAULT 0,best_level INTEGER NOT NULL DEFAULT 1,best_duration INTEGER NOT NULL DEFAULT 0,updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())';
+ for(const entry of addresses){
+  const candidate=new Pool({host:entry.address,port,user,password,database,max:Number(process.env.DB_POOL_MAX||5),connectionTimeoutMillis:10000,idleTimeoutMillis:30000,ssl:{servername:hostname,rejectUnauthorized:false},enableChannelBinding});
+  try {
+   await candidate.query(tableSql);
+   tetrisPool=candidate;tetrisDbReady=true;tetrisDbError=null;
+   console.log(`Tetris score database ready (IPv4 ${entry.address}).`);
+   return;
+  } catch(e) {
+   const code=e&&e.code?String(e.code):'DB_CONNECTION_FAILED';
+   tetrisDbError=code;
+   console.error(`Tetris database connection attempt failed (${entry.address}):`,code,e&&e.message?e.message:'');
+   await candidate.end().catch(()=>{});
+  }
+ }
+ tetrisDbReady=false;
+ console.error('Tetris database initialization failed on all resolved IPv4 addresses.');
 }
 setInterval(()=>{const now=Date.now();for(const [ticket,session] of tetrisTickets){if(session.expiresAt<now)tetrisTickets.delete(ticket);}},10*60*1000).unref();
 app.use((err,_req,res,_next)=>{console.error('HTTP request error:',err&&err.message?err.message:err);if(res.headersSent)return;res.status(500).json({ok:false,error:'INTERNAL_SERVER_ERROR'});});
-initTetrisDatabase().finally(()=>server.listen(PORT,'0.0.0.0',()=>console.log(`game-botwhatsapp listening on ${PORT}`))); 
+server.listen(PORT,'0.0.0.0',()=>console.log(`game-botwhatsapp listening on ${PORT}`));
+initTetrisDatabase().catch(e=>{tetrisDbReady=false;tetrisDbError=e&&e.code?String(e.code):'DB_INIT_FAILED';console.error('Tetris database initialization failed:',tetrisDbError);});
